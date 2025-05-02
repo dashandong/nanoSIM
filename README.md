@@ -4,7 +4,7 @@
 
 ## Features
 
-- **Custom Lucy-Richardson Deconvolution**: Implements a modified version of the [two-step Lucy-Richardson deconvolution algorithm](https://doi.org/10.1038/srep37149) with energy conservation.
+- **Two-step LR Deconvolution**: Implements a modified version of the [two-step Lucy-Richardson deconvolution algorithm](https://doi.org/10.1038/srep37149) with energy conservation.
 - **Wide-Field, Deconvolved, Optical-Sectioned and SIM Image Reconstruction**: Processes raw SIM data to produce wide-field, deconvolved, and high-resolution SIM images.
 - **Batch Processing**: Supports automated batch processing of multiple time points.
 - **Energy Normalization**: Ensures consistent energy across imaging modalities for fair comparisons.
@@ -12,7 +12,7 @@
 ## File Descriptions
 
 - **`nanoSIM.m`**: Main script for SIM image reconstruction. Handles raw data input, OTF processing, and iterative reconstruction.
-- **`mydeconvlucy.m`**: Custom implementation of the Lucy-Richardson deconvolution algorithm.
+- **`mydeconvlucy.m`**: Custom implementation of the Lucy-Richardson deconvolution without non-negative constraint.
 - **`gen2Dotf.m`**: Generates 2D OTFs based on optical system parameters.
 - **`imwritestack32.m`**: Writes 32-bit image stacks to TIFF files.
 

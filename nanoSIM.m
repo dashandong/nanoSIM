@@ -790,6 +790,7 @@ function nanoSIM
             end
 
             simResult = mydeconvlucy(real(fftshift(ifft2(spectrumSum))), combinedOTF, paraLRIter);
+            simResult(simResult < 0) = 0;
 
             tiff_WF.setTag(tiff_WFTag);
             tiff_WF.write(single(imgWF));
