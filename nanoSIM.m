@@ -219,7 +219,7 @@ function nanoSIM
     OTFdampening = paraOTFDampening .^ meshKR_shift;
     OTFdampeningx2 = paraOTFDampening .^ meshKRx2_shift;
 
-    % Gain function for high frequency
+    % Gain function for high frequency, following the paper for FairSIM
     attFun2x = 1 - paraAttAmp * exp(-meshKRx2_shift .^ 2 / (2 * paraAttSigma ^ 2));
 
     % Filter mask
@@ -230,7 +230,7 @@ function nanoSIM
 
     paraIllVector = zeros(numDirection, 2);
 
-    %% Lucy-Richardson Deconvolution over Raw Images
+    %% Lucy-Richardson Deconvolution over Raw Images, 1-Step LR deconvolution
     % Default iteration number is 10
     for i = 1:(numPhase * numDirection) %#ok<FXUP>
         % imgRaw(:, :, i) = deconvlucy(imgRaw(:, :, i), PSF, paraLRIter);
@@ -244,7 +244,7 @@ function nanoSIM
 
     imgWFdeconv = sum(imgRaw, 3);
 
-    %% Background substraction with optical sectioned SIM
+    %% Optical Sectioning Image by Cross Subtraction and Averaging
     osImg = zeros(szWidth, szHeight, numDirection, 'single');
     osBG = zeros(szWidth, szHeight, numDirection, 'single');
 
@@ -270,7 +270,7 @@ function nanoSIM
     imgBG = sum(osBG, 3) .* numPhase;
     imgOS = imgWFdeconv - imgBG;
 
-    %% Notch filter
+    %% Notch filter, following the paper for HifiSIM
     notchFilter = 1 - exp(- (meshKR_shift) .^ 4 ./ (2 * (0.5 * paraKm) .^ 4));
     notchFilterx2 = 1 - exp(- (meshKRx2_shift) .^ 4 ./ (2 * (0.5 * paraKm) .^ 4));
     % for i = 1:(numPhase * numDirection) %#ok<FXUP>
@@ -401,6 +401,9 @@ function nanoSIM
     drawnow;
 
     %% Iteratively solve the vector precisely
+    % Same idea as the FairSIM, maximizing the cross-correlation
+    % between the three frequency components
+    % here we use a gradient ascent method to iteratively refine the vector
     for d = 1:numDirection %#ok<FXUP>
         disp(['Vector iteration for direction #', num2str(d), ' ...']);
         iterGradStep = 1e-4;
@@ -450,7 +453,7 @@ function nanoSIM
         paraIllVector(d, :) = vector;
     end
 
-    %% Solve the initial phase and modulation depth
+    %% Solve the initial phase and modulation depth with the optimized vectors
     for d = 1:numDirection %#ok<FXUP>
         disp(['Solving initial phase and modulation depth for direction #', num2str(d), ' ...']);
         [gamma, phi] = getParameters(spectrumSep2x(:, :, :, d), ...
@@ -518,7 +521,7 @@ function nanoSIM
 
     end
 
-    %% Wiener inverse filtering
+    %% Combine the spectrum and OTF
     spectrumSum = complex(zeros(szHeight * 2, szWidth * 2));
     otfSum = complex(zeros(szHeight * 2, szWidth * 2));
     maskSum = zeros(szHeight * 2, szWidth * 2);
@@ -531,15 +534,12 @@ function nanoSIM
         maskSum = maskSum + masktemp;
     end
 
-    % Normalize the combined spectrum
-    % this step is essential to keep the energy conservation during the deconvolution
-    % maskSum(maskSum == 0) = 1; % avoid division by zero
-    % spectrumSum = spectrumSum ./ maskSum .* numPhase .* numDirection;
-    % otfSum = otfSum ./ maskSum .* numPhase;
-
     combinedImg = real(fftshift(ifft2(spectrumSum)));
     combinedOTF = otfSum ./ numDirection;
-    combinedPSF = real(fftshift(ifft2(combinedOTF)));
+    % combinedPSF = real(fftshift(ifft2(combinedOTF)));
+
+    % Second Step LR Deconvolution
+    simResult = mydeconvlucy(combinedImg, combinedOTF, paraLRIter);
 
     %% Preview the result and fine-tune the Wiener parameter
     close(f);
@@ -952,50 +952,10 @@ function nanoSIM
 
         phi1 = angle(sum(test1(:)) ./ sum(test10(:)));
         phi2 = angle(sum(test2(:)) ./ sum(test20(:)));
-        phi = sign(phi1) * (abs(phi1) + abs(phi1)) / 2;
+        phi = sign(phi1) * (abs(phi1) + abs(phi2)) / 2;
 
         disp(gamma);
         disp(rad2deg(phi));
-
-    end
-
-    %% Fitting an ellipse in polar coordinates
-    function [alpha_rad, ellipse] = getElipseAlpha(Theta, Rho)
-        [x, y] = pol2cart(Theta(:), Rho(:));
-        mean_x = mean(x(:));
-        mean_y = mean(y(:));
-        x = x - mean_x;
-        y = y - mean_y;
-        X = [x .^ 2, x .* y, y .^ 2, x, y];
-        cm = sum(X) / (X' * X);
-        [A, B, C, D, E] = deal(cm(1), cm(2), cm(3), cm(4), cm(5));
-        orientation_rad = 1/2 * atan(B / (C - A));
-        cos_phi = cos(orientation_rad);
-        sin_phi = sin(orientation_rad);
-        [A, B, C, D, E] = deal( ...
-            A * cos_phi ^ 2 - B * cos_phi * sin_phi + C * sin_phi ^ 2, ...
-            0, ...
-            A * sin_phi ^ 2 + B * cos_phi * sin_phi + C * cos_phi ^ 2, ...
-            D * cos_phi - E * sin_phi, ...
-            D * sin_phi + E * cos_phi); %#ok<ASGLU>
-        [mean_x, mean_y] = deal( ...
-            cos_phi * mean_x - sin_phi * mean_y, ...
-            sin_phi * mean_x + cos_phi * mean_y);
-
-        X0 = mean_x - D / 2 / A;
-        Y0 = mean_y - E / 2 / C;
-        F = 1 + (D ^ 2) / (4 * A) + (E ^ 2) / (4 * C);
-        [A, B] = deal(sqrt(F / A), sqrt(F / C));
-
-        R = [cos_phi sin_phi; -sin_phi cos_phi];
-
-        ellipse_x_r = X0 + A * cos(Theta);
-        ellipse_y_r = Y0 + B * sin(Theta);
-        rotated_ellipse = R * [ellipse_x_r; ellipse_y_r];
-        [ellipse(1, :), ellipse(2, :)] = cart2pol( ...
-            rotated_ellipse(1, :), rotated_ellipse(2, :));
-        alpha_rad = atan2(-sin_phi * X0 + cos_phi * Y0, ...
-            cos_phi * X0 + sin_phi * Y0);
     end
 
 end
