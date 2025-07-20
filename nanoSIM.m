@@ -49,7 +49,7 @@ function nanoSIM
     % Numerical aperture
     paraNA = 1.45;
     % Pixel size
-    paraPixelSz = 6.5;
+    paraPixelSz = 6.5 / paraMag;
     % Gain for high frequency
     paraAttAmp = 0;
     % High gain range for high frequency
@@ -57,8 +57,8 @@ function nanoSIM
     % Wavelength for emission
     paraWavelength = 0.520;
 
-    % ODT Dampening factor
-    paraOTFDampening = 0.95;
+    % OTF Dampening factor
+    paraOTFDampening = 1.0;
 
     %% Select SIM raw data (standard Tiff format <4G)
     [filename_raw, pathname_raw] = uigetfile( ...
@@ -338,7 +338,7 @@ function nanoSIM
         'Name', ['SIM parameters for ', filename_raw], ...
         'Units', 'normalized', ...
         'Position', [0.1 0.1 0.8 0.8]);
-    tiledlayout(f, 3, 4);
+    tiledlayout(f, 2, numDirection);
     spectrumCrossCorr = zeros(szHeight * 2, szWidth * 2, numDirection);
     disp('Locating vectors...');
 
@@ -352,7 +352,7 @@ function nanoSIM
         spectrumCrossCorr2 = abs(fft2(conj(ifft2(spectrum2)) .* ifft2(spectrum0)));
         spectrumCrossCorr(:, :, d) = spectrumCrossCorr1 + spectrumCrossCorr2;
 
-        nexttile((d - 1) * 4 + 1);
+        nexttile(d);
         pbg = imagesc( ...
             [-szWidth, szWidth - 1], ...
             [-szHeight, szHeight - 1], ...
@@ -385,7 +385,7 @@ function nanoSIM
 
     % Plot the zoomed-in spectrum and locate the vectors
     for d = 1:numDirection %#ok<FXUP>
-        nexttile((d - 1) * 4 + 2);
+        nexttile(numDirection + d);
         imagesc( ...
             [-szWidth, szWidth - 1], ...
             [-szHeight, szHeight - 1], ...
@@ -422,7 +422,7 @@ function nanoSIM
         iterStep = 0.1 / norm(corGrad);
         corStep = iterStep * corGrad;
 
-        nexttile((d - 1) * 4 + 2);
+        nexttile(numDirection + d);
         p = plot(vector(1), vector(2), 'rx');
         drawnow;
 
@@ -524,19 +524,24 @@ function nanoSIM
     %% Combine the spectrum and OTF
     spectrumSum = complex(zeros(szHeight * 2, szWidth * 2));
     otfSum = complex(zeros(szHeight * 2, szWidth * 2));
-    maskSum = zeros(szHeight * 2, szWidth * 2);
+    % maskSum = zeros(szHeight * 2, szWidth * 2);
 
     for d = 1:numDirection %#ok<FXUP>
         spectrumSum = spectrumSum + ...
-            specCombine(spectrumSep2x(:, :, :, d), paraIllVector(d, :));
+            specCombine(spectrumSep2x(:, :, :, d), paraIllVector(d, :)) ./ sum(1 ./ paraIMatrix(:, d), "all");
         [otftemp, masktemp] = otfCombine(paraIllVector(d, :), paraIMatrix(:, d));
         otfSum = otfSum + otftemp;
-        maskSum = maskSum + masktemp;
+        % maskSum = maskSum + masktemp;
     end
+
+    %% Notes for Energy Conservation Normalization
+    % 1. The speperated spectrum already multiplied by numPhase, equivalent to sum over numPhase images
+    % 2. When combining the spectrum, the energy is amplified by a factor of (1 + gamma)
+    % 3. The combined OTF should be normalized by numDirection to get a energy conservation filter
 
     combinedImg = real(fftshift(ifft2(spectrumSum)));
     combinedOTF = otfSum ./ numDirection;
-    % combinedPSF = real(fftshift(ifft2(combinedOTF)));
+    combinedPSF = real(fftshift(ifft2(combinedOTF)));
 
     % Second Step LR Deconvolution
     simResult = mydeconvlucy(combinedImg, combinedOTF, paraLRIter);
@@ -546,7 +551,7 @@ function nanoSIM
     uiResult = uifigure('Name', 'SIM Result', ...
         'Units', 'normalized', ...
         'Position', [0.1, 0.1, 0.8, 0.8]);
-    uiLayout = uigridlayout(uiResult, [2, 4]);
+    uiLayout = uigridlayout(uiResult, [2, 3]);
     uiLayout.RowHeight = {'1x', '1x', 50, 20};
     uiLayout.ColumnWidth = {'1x', '1x'};
     uiAxes1 = uiaxes(uiLayout);
@@ -595,21 +600,16 @@ function nanoSIM
     clim(uiAxes4, [0, 0.90 * max(imgWF(:))]);
     colorbar(uiAxes4);
 
-    uiIterSlider = uislider(uiLayout, 'Limits', [1, 20], 'Value', 10, 'ValueChangedFcn', @drawResult);
-    uiIterSlider.Layout.Row = 3;
-    uiIterSlider.Layout.Column = 2;
     uiProcessButton = uibutton(uiLayout, 'push', ...
         'Text', 'Start Batch Process', ...
         'ButtonPushedFcn', @batchProcess);
-    uiProcessButton.Layout.Row = 4;
+    uiProcessButton.Layout.Row = 3;
     uiProcessButton.Layout.Column = 2;
 
     %% Batch processing for all frames
     function batchProcess(~, ~)
         disp('Start batch processing ...');
-        paraLRIter = round(uiIterSlider.Value);
         uiProcessButton.Enable = 'off';
-        uiIterSlider.Enable = 'off';
         numStackStart = mod(numStackStart - 1, 9) + 1;
         numStackGroup = (szStack - numStackStart + 1) / (numPhase * numDirection);
         uiProgress = uiprogressdlg(uiResult, 'Title', 'Batch processing...', ...
@@ -786,7 +786,7 @@ function nanoSIM
 
             for d = 1:numDirection %#ok<FXUP>
                 spectrumSum = spectrumSum + ...
-                    specCombine(spectrumSep2x(:, :, :, d), paraIllVector(d, :));
+                    specCombine(spectrumSep2x(:, :, :, d), paraIllVector(d, :)) ./ sum(1 ./ paraIMatrix(:, d), "all");
             end
 
             simResult = mydeconvlucy(real(fftshift(ifft2(spectrumSum))), combinedOTF, paraLRIter);
@@ -818,14 +818,6 @@ function nanoSIM
         tiff_raw.close();
         tiff_out.close();
         tiff_WF.close();
-    end
-
-    %% Callback function for tuning the Wiener parameter
-    function drawResult(src, ~)
-        paraLRIter = round(src.Value);
-        simResult = mydeconvlucy(combinedImg, combinedOTF, paraLRIter);
-        rimg.CData = simResult;
-        clim(uiAxes5, [0, 0.90 * max(imgOS(:))]);
     end
 
     %% Get correlation value at specific wave vector
@@ -953,9 +945,6 @@ function nanoSIM
         phi1 = angle(sum(test1(:)) ./ sum(test10(:)));
         phi2 = angle(sum(test2(:)) ./ sum(test20(:)));
         phi = sign(phi1) * (abs(phi1) + abs(phi2)) / 2;
-
-        disp(gamma);
-        disp(rad2deg(phi));
     end
 
 end
